@@ -21,17 +21,31 @@ let botInstance = null;
 
 // Helpers to read/write subscribers
 function getSubscribers() {
+  let subs = [];
   try {
     if (!fs.existsSync(SUBSCRIBERS_FILE)) {
       fs.writeFileSync(SUBSCRIBERS_FILE, JSON.stringify([], null, 2));
-      return [];
+    } else {
+      const data = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
+      subs = JSON.parse(data || '[]');
     }
-    const data = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
-    return JSON.parse(data || '[]');
   } catch (err) {
     console.error('Error reading subscribers file:', err);
-    return [];
   }
+
+  // Support permanent subscriber from Environment Variable (Render-friendly)
+  if (process.env.TELEGRAM_CHAT_ID) {
+    const envChatId = parseInt(process.env.TELEGRAM_CHAT_ID, 10) || process.env.TELEGRAM_CHAT_ID;
+    if (!subs.some(s => s.id == envChatId)) {
+      subs.push({
+        id: envChatId,
+        title: 'Environment Configured Chat',
+        type: 'env',
+        addedAt: new Date().toISOString()
+      });
+    }
+  }
+  return subs;
 }
 
 function saveSubscribers(subscribers) {
