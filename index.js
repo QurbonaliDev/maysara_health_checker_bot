@@ -6,7 +6,10 @@ const TelegramBot = require('node-telegram-bot-api');
 
 // Configuration
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const MONITOR_URL = process.env.MONITOR_URL || 'https://maysara.devops.uz/dashboard/home';
+const MONITOR_URLS = (process.env.MONITOR_URL || 'https://maysara.devops.uz/dashboard/home')
+  .split(',')
+  .map(url => url.trim())
+  .filter(Boolean);
 const CHECK_INTERVAL_MS = parseInt(process.env.CHECK_INTERVAL_MS || '60000', 10);
 const SUBSCRIBERS_FILE = path.join(__dirname, 'subscribers.json');
 
@@ -16,7 +19,10 @@ if (!BOT_TOKEN) {
 }
 
 // State variables
-let isServerDown = false;
+const isServerDown = {};
+for (const url of MONITOR_URLS) {
+  isServerDown[url] = false;
+}
 let botInstance = null;
 
 // Helpers to read/write subscribers
@@ -135,9 +141,9 @@ bot.onText(/\/start/, (msg) => {
     responseMsg += `Ushbu chat allaqachon a'zolar ro'yxatida mavjud. 👌\n\n`;
   }
 
-  responseMsg += `🖥️ <b>Kuzatilayotgan Server:</b> <code>${MONITOR_URL}</code>\n`;
+  responseMsg += `🖥️ <b>Kuzatilayotgan Serverlar:</b>\n` + MONITOR_URLS.map(u => `• <code>${u}</code>`).join('\n') + `\n\n`;
   responseMsg += `⏱️ <b>Tekshiruv oralig'i:</b> <code>${CHECK_INTERVAL_MS / 1000} soniya</code>\n\n`;
-  responseMsg += `<i>Agar server ishlamay qolsa (500+ xatolik yoki ulanish uzilsa), sizga darhol xabar yuboriladi.</i>`;
+  responseMsg += `<i>Agar biror server ishlamay qolsa (500+ xatolik yoki ulanish uzilsa), sizga darhol xabar yuboriladi.</i>`;
 
   bot.sendMessage(chatId, responseMsg, { parse_mode: 'HTML' }).catch(err => {
     console.error(`Error sending start response to ${chatId}:`, err.message);
@@ -165,42 +171,38 @@ bot.onText(/\/status/, async (msg) => {
   const chatId = msg.chat.id;
   bot.sendChatAction(chatId, 'typing').catch(() => {});
 
-  const startTime = Date.now();
-  let statusInfo = '';
+  let statusInfo = `📊 <b>Serverlar holati:</b>\n\n`;
 
-  try {
-    const response = await axios.get(MONITOR_URL, {
-      timeout: 10000,
-      headers: { 'User-Agent': 'MaysaraHealthCheckerBot/1.0' },
-      validateStatus: () => true // Receive response for any status code
-    });
+  for (const url of MONITOR_URLS) {
+    const startTime = Date.now();
+    try {
+      const response = await axios.get(url, {
+        timeout: 10000,
+        headers: { 'User-Agent': 'MaysaraHealthCheckerBot/1.0' },
+        validateStatus: () => true // Receive response for any status code
+      });
 
-    const elapsed = Date.now() - startTime;
-    const dateStr = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+      const elapsed = Date.now() - startTime;
 
-    if (response.status >= 500) {
-      statusInfo = `🔴 <b>Serverda xatolik!</b>\n\n` +
-                   `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                   `❌ <b>Holat:</b> Xato javobi qaytdi (Status: <b>${response.status}</b>)\n` +
-                   `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
-                   `📅 <b>Sana va vaqt:</b> <code>${dateStr}</code>`;
-    } else {
-      statusInfo = `🟢 <b>Server muvaffaqiyatli ishlamoqda!</b>\n\n` +
-                   `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                   `✅ <b>Holat:</b> Ishchi holatda (Status: <b>${response.status}</b>)\n` +
-                   `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
-                   `📅 <b>Sana va vaqt:</b> <code>${dateStr}</code>`;
+      if (response.status >= 500) {
+        statusInfo += `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                     `❌ <b>Holat:</b> Xatolik (Status: <b>${response.status}</b>)\n` +
+                     `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n\n`;
+      } else {
+        statusInfo += `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                     `✅ <b>Holat:</b> Ishlamoqda (Status: <b>${response.status}</b>)\n` +
+                     `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n\n`;
+      }
+    } catch (err) {
+      const elapsed = Date.now() - startTime;
+      statusInfo += `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                    `❌ <b>Holat:</b> O'chgan/Ulanib bo'lmadi (<code>${err.message || 'Tarmoq xatosi'}</code>)\n` +
+                    `⏱️ <b>Urinish vaqti:</b> <code>${elapsed} ms</code>\n\n`;
     }
-  } catch (err) {
-    const elapsed = Date.now() - startTime;
-    const dateStr = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
-
-    statusInfo = `🔴 <b>Server o'chgan yoki ulanib bo'lmadi!</b>\n\n` +
-                 `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                 `❌ <b>Xatolik:</b> <code>${err.message || 'Ulanish xatosi'}</code>\n` +
-                 `⏱️ <b>Urinish vaqti:</b> <code>${elapsed} ms</code>\n` +
-                 `📅 <b>Sana va vaqt:</b> <code>${dateStr}</code>`;
   }
+
+  const dateStr = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+  statusInfo += `📅 <b>Sana va vaqt:</b> <code>${dateStr}</code>`;
 
   bot.sendMessage(chatId, statusInfo, { parse_mode: 'HTML' }).catch(err => {
     console.error(`Error sending status response to ${chatId}:`, err.message);
@@ -209,56 +211,58 @@ bot.onText(/\/status/, async (msg) => {
 
 // Periodic Server Monitoring Logic
 async function monitorServer() {
-  const startTime = Date.now();
   const dateStr = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
 
-  try {
-    const response = await axios.get(MONITOR_URL, {
-      timeout: 15000,
-      headers: { 'User-Agent': 'MaysaraHealthCheckerBot/1.0' },
-      validateStatus: () => true
-    });
+  for (const url of MONITOR_URLS) {
+    const startTime = Date.now();
+    try {
+      const response = await axios.get(url, {
+        timeout: 15000,
+        headers: { 'User-Agent': 'MaysaraHealthCheckerBot/1.0' },
+        validateStatus: () => true
+      });
 
-    const elapsed = Date.now() - startTime;
+      const elapsed = Date.now() - startTime;
 
-    // Check if it's a server error (500+)
-    if (response.status >= 500) {
-      if (!isServerDown) {
-        isServerDown = true;
-        const alertMsg = `⚠️ <b>SERVERDA XATOLIK ANIQLANDI!</b> ⚠️\n\n` +
-                         `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                         `❌ <b>Holat:</b> Serverdan xato javob qaytdi (Status: <b>${response.status}</b>)\n` +
-                         `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
+      // Check if it's a server error (500+)
+      if (response.status >= 500) {
+        if (!isServerDown[url]) {
+          isServerDown[url] = true;
+          const alertMsg = `⚠️ <b>SERVERDA XATOLIK ANIQLANDI!</b> ⚠️\n\n` +
+                           `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                           `❌ <b>Holat:</b> Serverdan xato javob qaytdi (Status: <b>${response.status}</b>)\n` +
+                           `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
+                           `📅 <b>Vaqt:</b> <code>${dateStr}</code>\n\n` +
+                           `<i>Tizim administratorlari ogohlantirildi. Server qayta tiklanishi kutilmoqda.</i>`;
+          await broadcast(alertMsg);
+        }
+      } else {
+        // Server returned success (<500), check if it recovered
+        if (isServerDown[url]) {
+          isServerDown[url] = false;
+          const recoveryMsg = `✅ <b>SERVER QAYTA TIKLANDI!</b> ✅\n\n` +
+                              `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                              `❇️ <b>Holat:</b> Ishchi holatga qaytdi (Status: <b>${response.status}</b>)\n` +
+                              `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
+                              `📅 <b>Vaqt:</b> <code>${dateStr}</code>\n\n` +
+                              `<i>Server yana muvaffaqiyatli ishlamoqda.</i>`;
+          await broadcast(recoveryMsg);
+        }
+      }
+    } catch (err) {
+      const elapsed = Date.now() - startTime;
+
+      // Axios error indicates network issues / timeout / server offline
+      if (!isServerDown[url]) {
+        isServerDown[url] = true;
+        const alertMsg = `⚠️ <b>SERVER O'CHDI YOKI ULANIB BO'LMADI!</b> ⚠️\n\n` +
+                         `🖥️ <b>Server:</b> <code>${url}</code>\n` +
+                         `❌ <b>Xatolik:</b> <code>${err.message || 'Tarmoq xatosi'}</code>\n` +
+                         `⏱️ <b>Urinish vaqti:</b> <code>${elapsed} ms</code>\n` +
                          `📅 <b>Vaqt:</b> <code>${dateStr}</code>\n\n` +
-                         `<i>Tizim administratorlari ogohlantirildi. Server qayta tiklanishi kutilmoqda.</i>`;
+                         `<i>Ulanish uzildi. Server muammosi bartaraf etilishini kuting.</i>`;
         await broadcast(alertMsg);
       }
-    } else {
-      // Server returned success (<500), check if it recovered
-      if (isServerDown) {
-        isServerDown = false;
-        const recoveryMsg = `✅ <b>SERVER QAYTA TIKLANDI!</b> ✅\n\n` +
-                            `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                            `❇️ <b>Holat:</b> Ishchi holatga qaytdi (Status: <b>${response.status}</b>)\n` +
-                            `⏱️ <b>Javob vaqti:</b> <code>${elapsed} ms</code>\n` +
-                            `📅 <b>Vaqt:</b> <code>${dateStr}</code>\n\n` +
-                            `<i>Server yana muvaffaqiyatli ishlamoqda.</i>`;
-        await broadcast(recoveryMsg);
-      }
-    }
-  } catch (err) {
-    const elapsed = Date.now() - startTime;
-
-    // Axios error indicates network issues / timeout / server offline
-    if (!isServerDown) {
-      isServerDown = true;
-      const alertMsg = `⚠️ <b>SERVER O'CHDI YOKI ULANIB BO'LMADI!</b> ⚠️\n\n` +
-                       `🖥️ <b>Server:</b> <code>${MONITOR_URL}</code>\n` +
-                       `❌ <b>Xatolik:</b> <code>${err.message || 'Tarmoq xatosi'}</code>\n` +
-                       `⏱️ <b>Urinish vaqti:</b> <code>${elapsed} ms</code>\n` +
-                       `📅 <b>Vaqt:</b> <code>${dateStr}</code>\n\n` +
-                       `<i>Ulanish uzildi. Server muammosi bartaraf etilishini kuting.</i>`;
-      await broadcast(alertMsg);
     }
   }
 }
